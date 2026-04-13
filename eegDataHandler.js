@@ -170,7 +170,7 @@ class EEGDataHandler {
         const bands = ['delta', 'theta', 'alpha', 'beta', 'gamma'];
 
         bands.forEach(band => {
-            if (newBands[band] !== undefined) {
+            if (newBands[band] !== undefined && Number.isFinite(newBands[band])) {
                 // Add to history
                 this.history[band].push(newBands[band]);
                 if (this.history[band].length > this.historyLength) {
@@ -219,6 +219,10 @@ class EEGDataHandler {
      * @param {number} spike - Spike amplitude (0-1)
      */
     updateMotorSpike(spike) {
+        if (!Number.isFinite(spike)) {
+            return;
+        }
+
         this.motorSpike = spike;
         if (spike > CONFIG.motorSpike.threshold) {
             this.lastSpikeTime = Date.now();

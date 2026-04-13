@@ -125,6 +125,8 @@ let tcpReconnectTimer = null;
 let tcpBytesReceived = 0;
 let tcpPacketsParsed = 0;
 let tcpFirstDataReceived = false;
+let eegInvalidPacketCount = 0;
+let eegLastInvalidLogAt = 0;
 
 // TCP binary parser state
 let tcpBuffer = Buffer.alloc(0);
@@ -399,9 +401,27 @@ function processEEGPacket(payload, packetNumber) {
             channelValues.map(v => v.toFixed(2)).join(', '));
     }
 
-    // For visualization, we average all channels into a single signal.
+    // DSI can output NaN/Infinity on bad channels; ignore invalid channel samples.
+    const validChannels = channelValues.filter(Number.isFinite);
+
+    if (validChannels.length === 0) {
+        eegInvalidPacketCount++;
+        const now = Date.now();
+        if (now - eegLastInvalidLogAt > 5000) {
+            console.warn(`[EEG] Dropped ${eegInvalidPacketCount} packets with no valid channels`);
+            eegLastInvalidLogAt = now;
+        }
+        return;
+    }
+
+    // For visualization, average valid channels into a single signal.
     // For advanced use, you could process specific channels (e.g., C3/C4 for motor cortex).
-    const avgSample = channelValues.reduce((a, b) => a + b, 0) / numChannels;
+    const avgSample = validChannels.reduce((a, b) => a + b, 0) / validChannels.length;
+
+    if (!Number.isFinite(avgSample)) {
+        eegInvalidPacketCount++;
+        return;
+    }
 
     // Add to FFT buffer
     eegBuffer.push(avgSample);
@@ -509,6 +529,10 @@ function processOSCBandPowers(data) {
 function computeFFTBandPowers() {
     const samples = eegBuffer.slice(-CONFIG.fftSize);
 
+    if (samples.length < CONFIG.fftSize || samples.some(v => !Number.isFinite(v))) {
+        return;
+    }
+
     // Apply Hann window
     const windowed = new Array(CONFIG.fftSize);
     for (let i = 0; i < CONFIG.fftSize; i++) {
@@ -528,7 +552,8 @@ function computeFFTBandPowers() {
     for (let k = 0; k < halfN; k++) {
         const real = output[2 * k];
         const imag = output[2 * k + 1];
-        powerSpectrum[k] = (real * real + imag * imag) / (CONFIG.fftSize * CONFIG.fftSize);
+        const binPower = (real * real + imag * imag) / (CONFIG.fftSize * CONFIG.fftSize);
+        powerSpectrum[k] = Number.isFinite(binPower) ? binPower : 0;
         totalPower += powerSpectrum[k];
     }
 
@@ -541,7 +566,8 @@ function computeFFTBandPowers() {
         for (let k = startBin; k <= endBin; k++) {
             power += powerSpectrum[k];
         }
-        bandPowers[band] = power / totalPower;
+        const normalized = power / totalPower;
+        bandPowers[band] = Number.isFinite(normalized) ? normalized : 0;
     });
 
     detectMotorSpike(totalPower);
