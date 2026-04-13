@@ -1,0 +1,26 @@
+{
+  "name": "neuroart-websocket-bridge",
+  "version": "1.0.0",
+  "description": "WebSocket bridge for DSI-Streamer EEG data to NeuroArt P5.js application",
+  "main": "websocket-bridge.js",
+  "scripts": {
+    "start": "node websocket-bridge.js",
+    "dev": "nodemon websocket-bridge.js"
+  },
+  "keywords": [
+    "eeg",
+    "websocket",
+    "dsi-streamer",
+    "neuroart"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "fft.js": "^4.0.4",
+    "node-osc": "^9.1.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
