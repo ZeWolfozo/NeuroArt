@@ -122,6 +122,9 @@ let tcpClient = null;
 let tcpConnected = false;
 let tcpReconnectAttempts = 0;
 let tcpReconnectTimer = null;
+let tcpBytesReceived = 0;
+let tcpPacketsParsed = 0;
+let tcpFirstDataReceived = false;
 
 // TCP binary parser state
 let tcpBuffer = Buffer.alloc(0);
@@ -195,14 +198,37 @@ function connectTCP() {
 
     tcpClient = new net.Socket();
 
+    // Enable TCP keepalive to prevent OS-level idle disconnects
+    tcpClient.setKeepAlive(true, 5000);
+
     tcpClient.connect(port, host, () => {
         console.log(`[TCP] ✓ Connected to DSI-Streamer at ${host}:${port}`);
+        console.log(`[TCP] Waiting for EEG data... (make sure DSI-Streamer is streaming)`);
         tcpConnected = true;
         tcpReconnectAttempts = 0;
+        tcpBytesReceived = 0;
+        tcpPacketsParsed = 0;
+        tcpFirstDataReceived = false;
         tcpBuffer = Buffer.alloc(0);
+
+        // Disable the connect timeout once connected — DSI-Streamer may not
+        // start streaming until the user presses Record/Start in the DSI app.
+        tcpClient.setTimeout(0);
     });
 
     tcpClient.on('data', (data) => {
+        tcpBytesReceived += data.length;
+
+        // Log the very first data arrival — confirms DSI-Streamer is streaming
+        if (!tcpFirstDataReceived) {
+            tcpFirstDataReceived = true;
+            console.log(`[TCP] ✓ First data received! (${data.length} bytes)`);
+            // Log the first 40 bytes as hex for protocol debugging
+            const preview = data.slice(0, Math.min(40, data.length));
+            console.log(`[TCP] Raw preview: ${preview.toString('hex').match(/../g).join(' ')}`);
+            console.log(`[TCP] ASCII preview: ${preview.toString('ascii').replace(/[^\x20-\x7e]/g, '.')}`);
+        }
+
         // Append incoming data to the parse buffer
         tcpBuffer = Buffer.concat([tcpBuffer, data]);
 
@@ -230,11 +256,15 @@ function connectTCP() {
     });
 
     tcpClient.on('timeout', () => {
-        console.log('[TCP] Connection timed out');
+        // This only fires during initial connection (before connect callback)
+        // because we call setTimeout(0) after connecting.
+        console.log('[TCP] Connection timed out (could not reach DSI-Streamer)');
         tcpClient.destroy();
     });
 
-    tcpClient.setTimeout(10000); // 10s connection timeout
+    // 15s timeout ONLY for the initial TCP handshake.
+    // Once connected, this is disabled in the 'connect' handler above.
+    tcpClient.setTimeout(15000);
 }
 
 /**
@@ -353,6 +383,7 @@ function findDelimiter(buf) {
  * @param {number} packetNumber - Packet sequence number
  */
 function processEEGPacket(payload, packetNumber) {
+    tcpPacketsParsed++;
     const numChannels = Math.floor(payload.length / 4);
 
     if (numChannels === 0) return;
@@ -572,6 +603,12 @@ setInterval(() => {
         : 'LISTENING';
 
     console.log(`[Status] Mode: ${mode} | DSI: ${dsiStatus} | Browser clients: ${wsClients.size}`);
+    if (CONFIG.connectionMode === 'tcp') {
+        console.log(`  TCP bytes received: ${tcpBytesReceived} | EEG packets parsed: ${tcpPacketsParsed}`);
+        if (tcpConnected && tcpBytesReceived === 0) {
+            console.log('  ⚠ Connected but NO data received — check DSI-Streamer is streaming');
+        }
+    }
     console.log('  Band Powers:', Object.fromEntries(
         Object.entries(bandPowers).map(([k, v]) => [k, v.toFixed(4)])
     ));
